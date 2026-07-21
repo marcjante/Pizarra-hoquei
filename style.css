@@ -1,0 +1,147 @@
+  :root{
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel-2: #1c232c;
+    --border: #2a323d;
+    --accent: #3ddc84;
+    --accent-2: #ffb703;
+    --text: #e6edf3;
+    --text-dim: #8b949e;
+  }
+  *{ box-sizing:border-box; }
+  body{
+    margin:0;
+    padding:0;
+    background:var(--bg);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    touch-action:manipulation;
+    -webkit-tap-highlight-color:transparent;
+    color:var(--text);
+    min-height:100vh;
+  }
+  .app-header{
+    width:100%;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap:8px;
+    padding:14px 16px 10px;
+    background:linear-gradient(180deg, var(--panel), var(--bg));
+    border-bottom:1px solid var(--border);
+  }
+  .app-header .logo{
+    width:26px; height:26px;
+    border-radius:7px;
+    background:var(--accent);
+    display:flex;align-items:center;justify-content:center;
+    font-size:14px; font-weight:800; color:#04170b;
+  }
+  .app-header h1{
+    font-size:15px;
+    font-weight:700;
+    margin:0;
+    letter-spacing:0.2px;
+  }
+  .app-header .subtitle{
+    font-size:11px;
+    color:var(--text-dim);
+    font-weight:500;
+  }
+  main{
+    width:100%;
+    max-width:520px;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    padding:14px 12px 24px;
+    flex:1;
+  }
+  .field-card{
+    width:100%;
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:16px;
+    padding:10px;
+    box-shadow:0 8px 24px rgba(0,0,0,0.35);
+    margin-bottom:14px;
+  }
+  #rink-container{
+    position:relative;
+    width:100%;
+    aspect-ratio:500/720;
+    touch-action:none;
+    border-radius:12px;
+    overflow:hidden;
+  }
+  #rink-svg{ position:absolute; inset:0; display:block; }
+  #draw-canvas{ position:absolute; inset:0; width:100%; height:100%; touch-action:none; }
+  #token-layer{ position:absolute; inset:0; pointer-events:none; }
+  #token-layer > div{ position:absolute; display:flex; align-items:center; justify-content:center; border-radius:50%; font-weight:600; font-family:Arial,sans-serif; user-select:none; -webkit-user-select:none; border:2px solid rgba(0,0,0,0.35); touch-action:none; pointer-events:auto; cursor:grab; box-shadow:0 2px 5px rgba(0,0,0,0.35); transition:transform 0.08s; }
+
+  .hint{
+    color:var(--text-dim);
+    font-size:11.5px;
+    line-height:1.5;
+    margin:2px 2px 14px;
+    text-align:center;
+  }
+  .dock{
+    width:100%;
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:14px;
+    padding:10px 8px;
+    margin-bottom:10px;
+  }
+  .dock-row{
+    display:flex;
+    flex-wrap:wrap;
+    gap:8px;
+    justify-content:center;
+  }
+  .dock-row + .dock-row{ margin-top:8px; padding-top:8px; border-top:1px solid var(--border); }
+  .icon-btn{
+    flex:0 0 auto;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap:3px;
+    width:60px;
+    height:56px;
+    background:var(--panel-2);
+    color:var(--text);
+    border:1.5px solid var(--border);
+    border-radius:12px;
+    font-size:9.5px;
+    font-weight:600;
+    cursor:pointer;
+    padding:4px 2px;
+    touch-action:manipulation;
+    line-height:1.1;
+  }
+  .icon-btn svg{ width:20px; height:20px; }
+  .icon-btn:active{ background:#232c37; }
+  .icon-btn.active{ border-color:var(--accent); color:var(--accent); background:rgba(61,220,132,0.08); }
+  .icon-btn .dot{
+    width:18px; height:18px; border-radius:50%;
+    border:1.5px solid rgba(0,0,0,0.35);
+  }
+  .icon-btn .swatch{
+    width:26px; height:26px; border-radius:7px;
+    border:1.5px solid var(--border);
+    padding:0; overflow:hidden;
+  }
+  input[type=color]{
+    -webkit-appearance:none; appearance:none;
+    width:26px; height:26px; border:none; padding:0; background:none; cursor:pointer; border-radius:7px;
+  }
+  input[type=color]::-webkit-color-swatch-wrapper{ padding:0; }
+  input[type=color]::-webkit-color-swatch{ border:1.5px solid var(--border); border-radius:7px; }
+
+  #video-result{ display:none; width:100%; background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:12px; margin-bottom:14px; text-align:center; }
+  #video-preview{ width:100%; border-radius:10px; background:#000; }
+  #video-download{ display:block; margin-top:10px; background:var(--accent); color:#04170b; font-weight:700; text-decoration:none; padding:10px; border-radius:10px; font-size:13px; }
