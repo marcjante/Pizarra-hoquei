@@ -1,33 +1,45 @@
 (function(){
-  // ---------- Elementos ----------
+  // ================= Elementos =================
   const container = document.getElementById('rink-container');
   const canvas = document.getElementById('draw-canvas');
   const ctx = canvas.getContext('2d');
   const tokenLayer = document.getElementById('token-layer');
 
-  // ---------- Estado ----------
-  let mode = 'move';
-  let tool = 'solid';
+  // ================= Estado global =================
+  let mode = 'move';           // 'move' | 'draw'
+  let tool = 'solid';          // 'solid' | 'dotted' | 'dashed' | 'triangle' | 'circle' | 'text'
+  let selectMode = false;      // modo "Grupo" activo/inactivo
   let redCount = 0, blueCount = 0;
-  let strokes = [];
+  let itemSeq = 1;
+  let items = [];               // {id,kind,x,y,w,h,color,textColor,label,selected,el}
+  let strokes = [];             // {type:'line', color, lineStyle, points:[{x,y}], linkedItemId, tokenStart:{x,y}, tokenW, tokenH}
   let currentStroke = null;
   let history = [];
   let historyIndex = -1;
   let isPlaying = false;
+  let isGeneratingVideo = false;
   let activeAnimations = [];
   let animLoopRunning = false;
 
-  // ---------- Historial ----------
-  function saveState() {
-    const tokens = tokenLayer.querySelectorAll('div');
-    const tokenData = Array.from(tokens).map(el => ({
-      text: el.textContent,
-      style: el.style.cssText,
-      dataset: { ...el.dataset }
+  const SHAPE_R = 11;           // radio de triángulo/círculo
+  const MARKER_R = 8;           // radio del marcador animado
+
+  function uid(){ return 'it' + (itemSeq++) + '_' + Math.random().toString(36).slice(2,7); }
+
+  // ================= Historial (undo/redo) =================
+  function serializeItems() {
+    return items.map(it => ({
+      id: it.id, kind: it.kind, x: it.x, y: it.y, w: it.w, h: it.h,
+      color: it.color, textColor: it.textColor, label: it.label, selected: !!it.selected
     }));
+  }
+  function serializeStrokes() {
+    return JSON.parse(JSON.stringify(strokes));
+  }
+  function saveState() {
     const state = {
-      strokes: JSON.parse(JSON.stringify(strokes)),
-      tokens: tokenData,
+      items: serializeItems(),
+      strokes: serializeStrokes(),
       redCount, blueCount
     };
     history = history.slice(0, historyIndex + 1);
@@ -35,27 +47,22 @@
     historyIndex = history.length - 1;
     updateUndoRedoButtons();
   }
-
+  function loadFromState(state) {
+    strokes = JSON.parse(JSON.stringify(state.strokes || []));
+    redCount = state.redCount || 0;
+    blueCount = state.blueCount || 0;
+    items = (state.items || []).map(d => ({ ...d, el: null }));
+    tokenLayer.innerHTML = '';
+    items.forEach(it => { it.el = buildItemEl(it); tokenLayer.appendChild(it.el); });
+    applyModeToItems();
+    redraw();
+  }
   function restoreState(index) {
     if (index < 0 || index >= history.length) return;
-    const state = history[index];
-    strokes = state.strokes;
-    redCount = state.redCount;
-    blueCount = state.blueCount;
-    tokenLayer.innerHTML = '';
-    state.tokens.forEach(data => {
-      const el = document.createElement('div');
-      el.textContent = data.text || '';
-      el.style.cssText = data.style || '';
-      Object.keys(data.dataset || {}).forEach(k => el.dataset[k] = data.dataset[k]);
-      tokenLayer.appendChild(el);
-    });
+    loadFromState(history[index]);
     historyIndex = index;
-    applyModeToTokens();
-    redraw();
     updateUndoRedoButtons();
   }
-
   function undo() { if (historyIndex > 0) restoreState(historyIndex - 1); }
   function redo() { if (historyIndex < history.length - 1) restoreState(historyIndex + 1); }
   function updateUndoRedoButtons() {
@@ -63,50 +70,9 @@
     document.getElementById('redo-draw').disabled = (historyIndex >= history.length - 1);
   }
 
-  // ---------- Dibujo ----------
-  function drawShape(targetCtx, s) {
-    targetCtx.save();
-    targetCtx.strokeStyle = s.color;
-    targetCtx.fillStyle = s.color;
-    targetCtx.lineWidth = 3;
-    targetCtx.lineJoin = 'round';
-    targetCtx.lineCap = 'round';
-    targetCtx.setLineDash([]);
-    const x = s.x, y = s.y, r = 16;
-    if (s.kind === 'circle') {
-      targetCtx.globalAlpha = 0.18;
-      targetCtx.beginPath();
-      targetCtx.arc(x, y, r, 0, 2*Math.PI);
-      targetCtx.fill();
-      targetCtx.globalAlpha = 1;
-      targetCtx.beginPath();
-      targetCtx.arc(x, y, r, 0, 2*Math.PI);
-      targetCtx.stroke();
-    } else if (s.kind === 'triangle') {
-      targetCtx.beginPath();
-      targetCtx.moveTo(x, y-r);
-      targetCtx.lineTo(x-r*0.9, y+r*0.75);
-      targetCtx.lineTo(x+r*0.9, y+r*0.75);
-      targetCtx.closePath();
-      targetCtx.globalAlpha = 0.18;
-      targetCtx.fill();
-      targetCtx.globalAlpha = 1;
-      targetCtx.stroke();
-    } else if (s.kind === 'text') {
-      targetCtx.font = '24px Arial, Helvetica, sans-serif';
-      targetCtx.textAlign = 'left';
-      targetCtx.textBaseline = 'top';
-      targetCtx.fillText(s.text || 'Texto', x, y);
-    }
-    targetCtx.restore();
-  }
-
+  // ================= Líneas de movimiento (canvas) =================
   function renderStrokesOn(targetCtx) {
     strokes.forEach(s => {
-      if (s.type === 'shape') {
-        drawShape(targetCtx, s);
-        return;
-      }
       targetCtx.save();
       targetCtx.strokeStyle = s.color;
       targetCtx.lineWidth = 3;
@@ -124,258 +90,378 @@
       targetCtx.restore();
     });
   }
-
   function redraw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     renderStrokesOn(ctx);
   }
 
-  // ---------- Tokens ----------
-  function applyModeToTokens() {
-    const tokens = tokenLayer.querySelectorAll('div');
-    tokens.forEach(el => {
-      el.style.pointerEvents = (mode === 'move') ? 'auto' : 'none';
-      el.style.cursor = (mode === 'move') ? 'grab' : 'default';
+  // ================= Dibujo de items sobre un canvas (para export JPG/vídeo) =================
+  function drawItemOnCtx(targetCtx, it, cx, cy) {
+    targetCtx.save();
+    if (it.kind === 'player' || it.kind === 'ball') {
+      const w = it.w, h = it.h;
+      targetCtx.fillStyle = it.color;
+      targetCtx.beginPath();
+      targetCtx.arc(cx, cy, w/2, 0, 2*Math.PI);
+      targetCtx.fill();
+      targetCtx.strokeStyle = 'rgba(0,0,0,0.35)';
+      targetCtx.lineWidth = 1.5;
+      targetCtx.stroke();
+      if (it.label) {
+        targetCtx.fillStyle = it.textColor || '#fff';
+        targetCtx.font = '600 13px Arial';
+        targetCtx.textAlign = 'center';
+        targetCtx.textBaseline = 'middle';
+        targetCtx.fillText(it.label, cx, cy+1);
+      }
+    } else if (it.kind === 'triangle') {
+      const r = it.w/2;
+      targetCtx.strokeStyle = it.color;
+      targetCtx.fillStyle = it.color;
+      targetCtx.lineWidth = 2.5;
+      targetCtx.beginPath();
+      targetCtx.moveTo(cx, cy-r);
+      targetCtx.lineTo(cx-r*0.9, cy+r*0.75);
+      targetCtx.lineTo(cx+r*0.9, cy+r*0.75);
+      targetCtx.closePath();
+      targetCtx.globalAlpha = 0.2;
+      targetCtx.fill();
+      targetCtx.globalAlpha = 1;
+      targetCtx.stroke();
+    } else if (it.kind === 'circle') {
+      const r = it.w/2;
+      targetCtx.strokeStyle = it.color;
+      targetCtx.fillStyle = it.color;
+      targetCtx.lineWidth = 2.5;
+      targetCtx.globalAlpha = 0.2;
+      targetCtx.beginPath();
+      targetCtx.arc(cx, cy, r, 0, 2*Math.PI);
+      targetCtx.fill();
+      targetCtx.globalAlpha = 1;
+      targetCtx.beginPath();
+      targetCtx.arc(cx, cy, r, 0, 2*Math.PI);
+      targetCtx.stroke();
+    } else if (it.kind === 'text') {
+      targetCtx.fillStyle = it.color;
+      targetCtx.font = '600 15px Arial';
+      targetCtx.textAlign = 'center';
+      targetCtx.textBaseline = 'middle';
+      targetCtx.fillText(it.label || '', cx, cy);
+    }
+    targetCtx.restore();
+  }
+  function drawAllItemsOnCtx(targetCtx, overrides) {
+    items.forEach(it => {
+      let cx, cy;
+      if (overrides && overrides.has(it.id)) {
+        const o = overrides.get(it.id);
+        cx = o.x; cy = o.y;
+      } else {
+        cx = it.x + it.w/2;
+        cy = it.y + it.h/2;
+      }
+      drawItemOnCtx(targetCtx, it, cx, cy);
     });
   }
 
-  function makeToken(label, bg, fg, x, y, type = 'player') {
+  // ================= Construcción de items =================
+  function buildItemEl(it) {
     const el = document.createElement('div');
-    el.textContent = label;
-    el.style.left = x + 'px';
-    el.style.top = y + 'px';
-    el.style.width = '40px';
-    el.style.height = '40px';
-    el.style.background = bg;
-    el.style.color = fg;
-    el.style.fontSize = '15px';
-    el.dataset.tokenType = type;
-    tokenLayer.appendChild(el);
-    // Eventos de arrastre y doble toque
+    el.className = 'item-el';
+    el.style.left = it.x + 'px';
+    el.style.top = it.y + 'px';
+    el.style.width = it.w + 'px';
+    el.style.height = it.h + 'px';
+    el.dataset.id = it.id;
+
+    const body = document.createElement('div');
+    if (it.kind === 'player' || it.kind === 'ball') {
+      body.className = 'item-body-round';
+      body.style.background = it.color;
+      body.style.color = it.textColor || '#fff';
+      body.style.fontSize = (it.kind === 'ball') ? '0' : '15px';
+      body.textContent = it.label || '';
+    } else if (it.kind === 'triangle') {
+      body.innerHTML = '<svg viewBox="0 0 24 24" width="100%" height="100%"><path d="M12 3l10 19H2z" fill="'+it.color+'" fill-opacity="0.25" stroke="'+it.color+'" stroke-width="2"/></svg>';
+      body.style.width = '100%'; body.style.height = '100%';
+    } else if (it.kind === 'circle') {
+      body.innerHTML = '<svg viewBox="0 0 24 24" width="100%" height="100%"><circle cx="12" cy="12" r="10" fill="'+it.color+'" fill-opacity="0.25" stroke="'+it.color+'" stroke-width="2"/></svg>';
+      body.style.width = '100%'; body.style.height = '100%';
+    } else if (it.kind === 'text') {
+      body.className = 'item-body-text';
+      body.style.color = it.color;
+      body.textContent = it.label || '';
+    }
+    el.appendChild(body);
+
+    const del = document.createElement('div');
+    del.className = 'item-del';
+    del.textContent = '\u00d7';
+    el.appendChild(del);
+
+    wireItemInteractions(it, el, del);
+    return el;
+  }
+
+  function addItem(kind, x, y, opts) {
+    opts = opts || {};
+    let w = 40, h = 40;
+    if (kind === 'ball') { w = 26; h = 26; }
+    else if (kind === 'triangle' || kind === 'circle') { w = SHAPE_R*2; h = SHAPE_R*2; }
+    else if (kind === 'text') { w = 90; h = 22; }
+    const cw = canvas.width || container.getBoundingClientRect().width || 320;
+    const ch = canvas.height || container.getBoundingClientRect().height || 460;
+    let left = x - w/2, top = y - h/2;
+    left = Math.max(0, Math.min(cw - w, left));
+    top = Math.max(0, Math.min(ch - h, top));
+    const it = {
+      id: uid(), kind,
+      x: left, y: top, w, h,
+      color: opts.color || '#27ae60',
+      textColor: opts.textColor || '#fff',
+      label: opts.label || '',
+      selected: false,
+      el: null
+    };
+    it.el = buildItemEl(it);
+    items.push(it);
+    tokenLayer.appendChild(it.el);
+    applyModeToItems();
+    return it;
+  }
+
+  function deleteItem(id) {
+    const idx = items.findIndex(i => i.id === id);
+    if (idx === -1) return;
+    const it = items[idx];
+    if (it.el && it.el.parentNode) it.el.parentNode.removeChild(it.el);
+    items.splice(idx, 1);
+    strokes = strokes.filter(s => s.linkedItemId !== id);
+    redraw();
+    saveState();
+  }
+
+  function applyModeToItems() {
+    const showDel = (mode === 'move');
+    items.forEach(it => {
+      it.el.style.pointerEvents = (mode === 'move') ? 'auto' : 'none';
+      it.el.style.cursor = (mode === 'move') ? 'grab' : 'default';
+      it.el.classList.toggle('show-del', showDel);
+      it.el.classList.toggle('selected', !!it.selected);
+    });
+  }
+
+  // ================= Interacción: arrastrar, seleccionar, borrar =================
+  function wireItemInteractions(it, el, delBtn) {
     let isDragging = false;
-    let startX, startY, origLeft, origTop;
+    let startX = 0, startY = 0;
+    let moved = false;
+    let groupStart = null;
 
     function startDrag(clientX, clientY) {
       if (mode !== 'move') return;
       isDragging = true;
-      const rect = container.getBoundingClientRect();
-      startX = clientX;
-      startY = clientY;
-      origLeft = parseFloat(el.style.left) || 0;
-      origTop = parseFloat(el.style.top) || 0;
-      el.style.transform = 'scale(1.15)';
-      el.style.zIndex = '5';
+      moved = false;
+      startX = clientX; startY = clientY;
+      el.classList.add('dragging');
+      const selectedItems = items.filter(i => i.selected);
+      if (it.selected && selectedItems.length > 1) {
+        groupStart = new Map();
+        selectedItems.forEach(i => groupStart.set(i.id, { x: i.x, y: i.y }));
+      } else {
+        groupStart = new Map([[it.id, { x: it.x, y: it.y }]]);
+      }
     }
 
-    function moveDrag(clientX, clientY) {
+    function moveDragFn(clientX, clientY) {
       if (!isDragging) return;
-      const rect = container.getBoundingClientRect();
       const dx = clientX - startX;
       const dy = clientY - startY;
-      const w = parseFloat(el.style.width) || 40;
-      const h = parseFloat(el.style.height) || 40;
-      let newLeft = origLeft + dx;
-      let newTop = origTop + dy;
-      newLeft = Math.max(0, Math.min(rect.width - w, newLeft));
-      newTop = Math.max(0, Math.min(rect.height - h, newTop));
-      el.style.left = newLeft + 'px';
-      el.style.top = newTop + 'px';
+      if (!moved && Math.hypot(dx, dy) > 6) moved = true;
+      if (!moved) return;
+      groupStart.forEach((orig, id2) => {
+        const item2 = items.find(i => i.id === id2);
+        if (!item2) return;
+        let nx = orig.x + dx;
+        let ny = orig.y + dy;
+        nx = Math.max(0, Math.min(canvas.width - item2.w, nx));
+        ny = Math.max(0, Math.min(canvas.height - item2.h, ny));
+        item2.x = nx; item2.y = ny;
+        item2.el.style.left = nx + 'px';
+        item2.el.style.top = ny + 'px';
+      });
     }
 
-    function endDrag() {
-      if (isDragging) {
-        isDragging = false;
-        el.style.transform = 'scale(1)';
-        el.style.zIndex = '';
+    function endDragFn() {
+      if (!isDragging) return;
+      isDragging = false;
+      el.classList.remove('dragging');
+      if (!moved && selectMode) {
+        it.selected = !it.selected;
+        el.classList.toggle('selected', it.selected);
+      } else if (moved) {
         saveState();
       }
     }
 
-    // Touch
+    // Táctil
     el.addEventListener('touchstart', (e) => {
       if (mode !== 'move') return;
       e.preventDefault();
-      const touch = e.touches[0];
-      startDrag(touch.clientX, touch.clientY);
+      e.stopPropagation();
+      const t = e.touches[0];
+      startDrag(t.clientX, t.clientY);
       document.addEventListener('touchmove', onTouchMove, { passive: false });
       document.addEventListener('touchend', onTouchEnd, { passive: false });
       document.addEventListener('touchcancel', onTouchEnd, { passive: false });
     }, { passive: false });
-
-    function onTouchMove(e) {
-      e.preventDefault();
-      const touch = e.touches[0];
-      moveDrag(touch.clientX, touch.clientY);
-    }
+    function onTouchMove(e) { e.preventDefault(); const t = e.touches[0]; moveDragFn(t.clientX, t.clientY); }
     function onTouchEnd(e) {
-      endDrag();
+      endDragFn();
       document.removeEventListener('touchmove', onTouchMove);
       document.removeEventListener('touchend', onTouchEnd);
       document.removeEventListener('touchcancel', onTouchEnd);
     }
 
-    // Mouse
+    // Ratón
     el.addEventListener('mousedown', (e) => {
       if (mode !== 'move') return;
       e.preventDefault();
+      e.stopPropagation();
       startDrag(e.clientX, e.clientY);
       document.addEventListener('mousemove', onMouseMove);
       document.addEventListener('mouseup', onMouseUp);
     });
+    function onMouseMove(e) { moveDragFn(e.clientX, e.clientY); }
+    function onMouseUp(e) {
+      endDragFn();
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    }
 
-    function onMouseMove(e) { moveDrag(e.clientX, e.clientY); }
-    function onMouseUp(e) { endDrag(); document.removeEventListener('mousemove', onMouseMove); document.removeEventListener('mouseup', onMouseUp); }
-
-    // Doble toque para eliminar
-    let lastTap = 0;
-    el.addEventListener('dblclick', (e) => {
-      el.remove();
-      saveState();
-    });
-    // También con doble toque en móvil (usamos pointerdown con timestamp)
-    el.addEventListener('pointerdown', (e) => {
-      const now = Date.now();
-      if (now - lastTap < 350) {
-        el.remove();
-        saveState();
-        e.preventDefault();
-        return;
-      }
-      lastTap = now;
-    });
-
-    applyModeToTokens();
-    return el;
+    // Botón de borrado
+    delBtn.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); deleteItem(it.id); }, { passive: false });
+    delBtn.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); });
+    delBtn.addEventListener('click', (e) => { e.stopPropagation(); deleteItem(it.id); });
   }
 
-  // ---------- Utilidades de búsqueda ----------
+  // ================= Utilidades de búsqueda =================
   function findNearestPlayer(x, y) {
-    const tokens = tokenLayer.querySelectorAll('div');
     let best = null, bestDist = 40;
-    tokens.forEach(t => {
-      if (t.dataset.tokenType !== 'player') return;
-      const w = parseFloat(t.style.width) || 40;
-      const h = parseFloat(t.style.height) || 40;
-      const cx = parseFloat(t.style.left) + w/2;
-      const cy = parseFloat(t.style.top) + h/2;
+    items.forEach(it => {
+      if (it.kind !== 'player') return;
+      const cx = it.x + it.w/2, cy = it.y + it.h/2;
       const d = Math.hypot(cx-x, cy-y);
-      if (d < bestDist) { bestDist = d; best = t; }
+      if (d < bestDist) { bestDist = d; best = it; }
     });
     return best;
   }
-
-  function findBallToken() {
-    const tokens = tokenLayer.querySelectorAll('div');
-    for (let t of tokens) if (t.dataset.tokenType === 'ball') return t;
-    return null;
+  function findBallItem() {
+    return items.find(it => it.kind === 'ball') || null;
   }
 
-  // ---------- Modo y herramientas ----------
+  // ================= Modo y herramientas =================
   function setMode(m) {
     mode = m;
     document.getElementById('mode-move').classList.toggle('active', m==='move');
     document.getElementById('mode-draw').classList.toggle('active', m==='draw');
     canvas.style.pointerEvents = (m==='draw') ? 'auto' : 'none';
     canvas.style.cursor = (m==='draw') ? 'crosshair' : 'default';
-    applyModeToTokens();
+    applyModeToItems();
   }
-
   function setTool(t) {
     tool = t;
     ['solid','dotted','dashed','triangle','circle','text'].forEach(k => {
       document.getElementById('tool-'+k).classList.toggle('active', k===t);
     });
   }
+  function setSelectMode(v) {
+    selectMode = v;
+    document.getElementById('mode-multi').classList.toggle('active', v);
+    document.getElementById('mode-multi').classList.toggle('multi-on', v);
+    if (v) setMode('move');
+    if (!v) {
+      items.forEach(it => { it.selected = false; it.el.classList.remove('selected'); });
+    }
+  }
 
-  // ---------- Dibujo en canvas (eventos táctiles + ratón) ----------
+  // ================= Dibujo de líneas en canvas =================
+  function canvasCoordsFromClient(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
+  }
+
   function startDraw(clientX, clientY) {
     if (mode !== 'draw') return;
-    const rect = canvas.getBoundingClientRect();
-    let x = clientX - rect.left;
-    let y = clientY - rect.top;
+    let { x, y } = canvasCoordsFromClient(clientX, clientY);
     const color = document.getElementById('pen-color').value;
 
     if (['solid','dotted','dashed'].includes(tool)) {
-      // Para 'dashed' (Movimiento) vinculamos a la bola, para los otros al jugador
-      let linkedToken = null;
-      if (tool === 'dashed') {
-        linkedToken = findBallToken();
-      } else {
-        linkedToken = findNearestPlayer(x, y);
-      }
+      let linkedItem = null;
+      if (tool === 'dashed') linkedItem = findBallItem();
+      else linkedItem = findNearestPlayer(x, y);
       let lineColor = color;
       let tokenStart = null, tokenW = null, tokenH = null;
-      if (linkedToken) {
-        tokenW = parseFloat(linkedToken.style.width) || 40;
-        tokenH = parseFloat(linkedToken.style.height) || 40;
-        x = parseFloat(linkedToken.style.left) + tokenW/2;
-        y = parseFloat(linkedToken.style.top) + tokenH/2;
-        tokenStart = { left: parseFloat(linkedToken.style.left), top: parseFloat(linkedToken.style.top) };
-        lineColor = linkedToken.style.background;
+      if (linkedItem) {
+        tokenW = linkedItem.w; tokenH = linkedItem.h;
+        x = linkedItem.x + tokenW/2;
+        y = linkedItem.y + tokenH/2;
+        tokenStart = { x: linkedItem.x, y: linkedItem.y };
+        lineColor = linkedItem.color;
       }
       currentStroke = {
         type: 'line',
         color: lineColor,
         lineStyle: tool,
         points: [{x,y}],
-        linkedToken: linkedToken,
-        tokenStart: tokenStart,
-        tokenW: tokenW,
-        tokenH: tokenH
+        linkedItemId: linkedItem ? linkedItem.id : null,
+        tokenStart, tokenW, tokenH
       };
       strokes.push(currentStroke);
     } else if (tool === 'text') {
       const txt = prompt('Introduce el texto:', 'Anotación');
+      currentStroke = null;
       if (txt !== null && txt.trim() !== '') {
-        strokes.push({ type: 'shape', kind: 'text', color: color, x: x, y: y, text: txt });
-        redraw();
+        addItem('text', x, y, { color, label: txt.trim() });
         saveState();
       }
-      currentStroke = null;
     } else {
-      // Formas: triangle, circle
-      strokes.push({ type: 'shape', kind: tool, color: color, x: x, y: y });
+      addItem(tool, x, y, { color });
       currentStroke = null;
-      redraw();
       saveState();
     }
   }
-
   function moveDraw(clientX, clientY) {
     if (!currentStroke) return;
-    const rect = canvas.getBoundingClientRect();
-    currentStroke.points.push({ x: clientX - rect.left, y: clientY - rect.top });
+    const { x, y } = canvasCoordsFromClient(clientX, clientY);
+    currentStroke.points.push({ x, y });
     redraw();
   }
-
   function endDraw() {
     if (currentStroke && currentStroke.type === 'line' && currentStroke.points.length > 1) {
-      // No iniciamos animación automáticamente
+      // línea válida
     } else if (currentStroke) {
       strokes.pop();
       redraw();
     }
+    if (currentStroke) saveState();
     currentStroke = null;
-    saveState();
   }
 
-  // Touch events on canvas
   canvas.addEventListener('touchstart', (e) => {
+    if (mode !== 'draw') return;
     e.preventDefault();
-    const touch = e.touches[0];
-    startDraw(touch.clientX, touch.clientY);
+    const t = e.touches[0];
+    startDraw(t.clientX, t.clientY);
     if (currentStroke) {
       document.addEventListener('touchmove', onCanvasTouchMove, { passive: false });
       document.addEventListener('touchend', onCanvasTouchEnd, { passive: false });
       document.addEventListener('touchcancel', onCanvasTouchEnd, { passive: false });
     }
   }, { passive: false });
-
-  function onCanvasTouchMove(e) {
-    e.preventDefault();
-    const touch = e.touches[0];
-    moveDraw(touch.clientX, touch.clientY);
-  }
+  function onCanvasTouchMove(e) { e.preventDefault(); const t = e.touches[0]; moveDraw(t.clientX, t.clientY); }
   function onCanvasTouchEnd(e) {
     endDraw();
     document.removeEventListener('touchmove', onCanvasTouchMove);
@@ -383,8 +469,8 @@
     document.removeEventListener('touchcancel', onCanvasTouchEnd);
   }
 
-  // Mouse events on canvas
   canvas.addEventListener('mousedown', (e) => {
+    if (mode !== 'draw') return;
     e.preventDefault();
     startDraw(e.clientX, e.clientY);
     if (currentStroke) {
@@ -392,11 +478,14 @@
       document.addEventListener('mouseup', onCanvasMouseUp);
     }
   });
-
   function onCanvasMouseMove(e) { moveDraw(e.clientX, e.clientY); }
-  function onCanvasMouseUp(e) { endDraw(); document.removeEventListener('mousemove', onCanvasMouseMove); document.removeEventListener('mouseup', onCanvasMouseUp); }
+  function onCanvasMouseUp(e) {
+    endDraw();
+    document.removeEventListener('mousemove', onCanvasMouseMove);
+    document.removeEventListener('mouseup', onCanvasMouseUp);
+  }
 
-  // ---------- Animación ----------
+  // ================= Animación (Play) =================
   function drawMarker(targetCtx, x, y, dashed, color) {
     targetCtx.save();
     if (dashed) {
@@ -404,54 +493,77 @@
       targetCtx.strokeStyle = '#141414';
       targetCtx.lineWidth = 1.5;
       targetCtx.beginPath();
-      targetCtx.arc(x, y, 8, 0, 2*Math.PI);
+      targetCtx.arc(x, y, MARKER_R, 0, 2*Math.PI);
       targetCtx.fill();
       targetCtx.stroke();
       targetCtx.strokeStyle = '#141414';
       targetCtx.lineWidth = 1;
       targetCtx.beginPath();
-      targetCtx.arc(x-2, y-2, 3, 0, 2*Math.PI);
+      targetCtx.arc(x-1.5, y-1.5, 2.2, 0, 2*Math.PI);
       targetCtx.stroke();
       targetCtx.beginPath();
-      targetCtx.moveTo(x-6, y+3);
-      targetCtx.lineTo(x+6, y+3);
+      targetCtx.moveTo(x-4.5, y+2.5);
+      targetCtx.lineTo(x+4.5, y+2.5);
       targetCtx.stroke();
     } else {
       targetCtx.fillStyle = color;
       targetCtx.strokeStyle = 'rgba(0,0,0,0.4)';
       targetCtx.lineWidth = 1.5;
       targetCtx.beginPath();
-      targetCtx.arc(x, y, 11, 0, 2*Math.PI);
+      targetCtx.arc(x, y, MARKER_R, 0, 2*Math.PI);
       targetCtx.fill();
       targetCtx.stroke();
     }
     targetCtx.restore();
   }
 
+  function computeAnimData(lineStrokes) {
+    return lineStrokes.map(s => {
+      const pts = s.points;
+      let lengths = [], total = 0;
+      for (let i=1; i<pts.length; i++) {
+        const d = Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y);
+        lengths.push(d);
+        total += d;
+      }
+      const duration = Math.max(700, Math.min(3000, total * 5));
+      return { stroke: s, lengths, total, duration };
+    });
+  }
+  function posAtProgress(a, progress) {
+    const distTarget = progress * a.total;
+    let acc = 0, i = 0;
+    while (i < a.lengths.length - 1 && acc + a.lengths[i] < distTarget) {
+      acc += a.lengths[i];
+      i++;
+    }
+    const pts = a.stroke.points;
+    const segStart = pts[i], segEnd = pts[i+1] || pts[i];
+    const segLen = a.lengths[i] || 1;
+    const segProgress = segLen ? (distTarget - acc) / segLen : 1;
+    return {
+      x: segStart.x + (segEnd.x - segStart.x) * segProgress,
+      y: segStart.y + (segEnd.y - segStart.y) * segProgress
+    };
+  }
+
   function startAnimation(stroke, onComplete) {
     const pts = stroke.points;
-    if (pts.length < 2) return;
+    if (pts.length < 2) { if (onComplete) onComplete(); return; }
     let lengths = [], total = 0;
     for (let i=1; i<pts.length; i++) {
       const d = Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y);
       lengths.push(d);
       total += d;
     }
-    if (total === 0) return;
+    if (total === 0) { if (onComplete) onComplete(); return; }
     const duration = Math.max(700, Math.min(3000, total * 5));
-    if (stroke.linkedToken && stroke.tokenStart) {
-      stroke.linkedToken.style.left = stroke.tokenStart.left + 'px';
-      stroke.linkedToken.style.top = stroke.tokenStart.top + 'px';
+    if (stroke.linkedItemId && stroke.tokenStart) {
+      const it = items.find(i => i.id === stroke.linkedItemId);
+      if (it) { it.x = stroke.tokenStart.x; it.y = stroke.tokenStart.y; it.el.style.left = it.x+'px'; it.el.style.top = it.y+'px'; }
     }
-    activeAnimations.push({
-      stroke, lengths, total, duration,
-      startTime: null,
-      onComplete: onComplete || null
-    });
-    if (!animLoopRunning) {
-      animLoopRunning = true;
-      requestAnimationFrame(animLoop);
-    }
+    activeAnimations.push({ stroke, lengths, total, duration, startTime: null, onComplete: onComplete || null });
+    if (!animLoopRunning) { animLoopRunning = true; requestAnimationFrame(animLoop); }
   }
 
   function animLoop(ts) {
@@ -461,34 +573,22 @@
       if (a.startTime === null) a.startTime = ts;
       const elapsed = ts - a.startTime;
       const progress = Math.min(1, elapsed / a.duration);
-      const distTarget = progress * a.total;
-      let acc = 0, i = 0;
-      while (i < a.lengths.length - 1 && acc + a.lengths[i] < distTarget) {
-        acc += a.lengths[i];
-        i++;
-      }
-      const pts = a.stroke.points;
-      const segStart = pts[i], segEnd = pts[i+1] || pts[i];
-      const segLen = a.lengths[i] || 1;
-      const segProgress = segLen ? (distTarget - acc) / segLen : 1;
-      const x = segStart.x + (segEnd.x - segStart.x) * segProgress;
-      const y = segStart.y + (segEnd.y - segStart.y) * segProgress;
-      if (a.stroke.linkedToken) {
-        const w = a.stroke.tokenW || 40;
-        const h = a.stroke.tokenH || 40;
-        a.stroke.linkedToken.style.left = (x - w/2) + 'px';
-        a.stroke.linkedToken.style.top = (y - h/2) + 'px';
+      const p = posAtProgress(a, progress);
+      if (a.stroke.linkedItemId) {
+        const it = items.find(i => i.id === a.stroke.linkedItemId);
+        if (it) {
+          it.x = p.x - it.w/2; it.y = p.y - it.h/2;
+          it.el.style.left = it.x + 'px'; it.el.style.top = it.y + 'px';
+        }
       } else {
-        drawMarker(ctx, x, y, (a.stroke.lineStyle === 'dashed'), a.stroke.color);
+        drawMarker(ctx, p.x, p.y, (a.stroke.lineStyle === 'dashed'), a.stroke.color);
       }
-      const finished = (a.startTime !== null) && ((ts - a.startTime) >= a.duration);
-      if (finished) {
-        toRemove.push(idx);
-        if (a.onComplete) a.onComplete();
-      }
+      if (progress >= 1) toRemove.push(idx);
     });
     for (let k = toRemove.length - 1; k >= 0; k--) {
+      const a = activeAnimations[k];
       activeAnimations.splice(toRemove[k], 1);
+      if (a.onComplete) a.onComplete();
     }
     if (activeAnimations.length > 0) {
       requestAnimationFrame(animLoop);
@@ -498,94 +598,87 @@
     }
   }
 
-  // Reproducir todas las líneas en orden
   document.getElementById('play-anim').addEventListener('click', function() {
-    if (isPlaying) return;
+    if (isPlaying || isGeneratingVideo) return;
     const lineStrokes = strokes.filter(s => s.type === 'line');
-    if (lineStrokes.length === 0) {
-      alert('No hay líneas para reproducir.');
-      return;
-    }
+    if (lineStrokes.length === 0) { alert('No hay líneas para reproducir.'); return; }
     activeAnimations = [];
     const resetDone = new Set();
     lineStrokes.forEach(s => {
-      if (s.linkedToken && s.tokenStart && !resetDone.has(s.linkedToken)) {
-        s.linkedToken.style.left = s.tokenStart.left + 'px';
-        s.linkedToken.style.top = s.tokenStart.top + 'px';
-        resetDone.add(s.linkedToken);
+      if (s.linkedItemId && s.tokenStart && !resetDone.has(s.linkedItemId)) {
+        const it = items.find(i => i.id === s.linkedItemId);
+        if (it) { it.x = s.tokenStart.x; it.y = s.tokenStart.y; it.el.style.left = it.x+'px'; it.el.style.top = it.y+'px'; }
+        resetDone.add(s.linkedItemId);
       }
     });
     redraw();
     isPlaying = true;
     const btn = this;
     const origText = btn.textContent;
-    btn.textContent = '⏳';
-    btn.disabled = true;
+    btn.textContent = '⏳'; btn.disabled = true;
 
     let i = 0;
     function playNext() {
-      if (i >= lineStrokes.length) {
-        isPlaying = false;
-        btn.textContent = origText;
-        btn.disabled = false;
-        return;
-      }
-      const s = lineStrokes[i];
-      i++;
+      if (i >= lineStrokes.length) { isPlaying = false; btn.textContent = origText; btn.disabled = false; return; }
+      const s = lineStrokes[i]; i++;
       startAnimation(s, playNext);
     }
     if (!animLoopRunning) {
       animLoopRunning = true;
-      requestAnimationFrame(function(ts) {
-        playNext();
-        animLoop(ts);
-      });
+      requestAnimationFrame(function(ts) { playNext(); animLoop(ts); });
     } else {
       playNext();
     }
   });
 
-  // ---------- Botones de añadir ----------
+  // ================= Botones de añadir jugadores/bola =================
   document.getElementById('add-red').addEventListener('click', () => {
     redCount++;
-    makeToken(String(redCount), '#e5484d', '#fff', 40 + ((redCount-1)%6)*42, 200);
+    addItem('player', canvas.width*0.15 + ((redCount-1)%6)*(canvas.width*0.13), canvas.height*0.30, { color:'#e5484d', textColor:'#fff', label:String(redCount) });
     saveState();
   });
   document.getElementById('add-blue').addEventListener('click', () => {
     blueCount++;
-    makeToken(String(blueCount), '#3b82f6', '#fff', 40 + ((blueCount-1)%6)*42, 500);
+    addItem('player', canvas.width*0.15 + ((blueCount-1)%6)*(canvas.width*0.13), canvas.height*0.70, { color:'#3b82f6', textColor:'#fff', label:String(blueCount) });
     saveState();
   });
   document.getElementById('add-gk').addEventListener('click', () => {
-    makeToken('P', '#f0c419', '#3a2a00', 230, 60);
+    addItem('player', canvas.width*0.5, canvas.height*0.10, { color:'#f0c419', textColor:'#3a2a00', label:'P' });
     saveState();
   });
   document.getElementById('add-ball').addEventListener('click', () => {
-    const el = makeToken('', '#f5efe2', '#000', 237, 348, 'ball');
-    el.style.width = '26px';
-    el.style.height = '26px';
-    el.style.fontSize = '0';
+    addItem('ball', canvas.width*0.5, canvas.height*0.5, { color:'#f5efe2' });
     saveState();
   });
-
   document.getElementById('clear-players').addEventListener('click', () => {
     if (confirm('Eliminar todos los jugadores y bola?')) {
-      tokenLayer.innerHTML = '';
+      items = items.filter(it => {
+        if (it.kind === 'player' || it.kind === 'ball') { if (it.el.parentNode) it.el.parentNode.removeChild(it.el); return false; }
+        return true;
+      });
+      strokes = strokes.filter(s => !s.linkedItemId || items.some(i => i.id === s.linkedItemId));
       redCount = 0; blueCount = 0;
+      redraw();
       saveState();
     }
   });
-
   document.getElementById('clear-draw').addEventListener('click', () => {
     strokes = [];
     redraw();
     saveState();
   });
-
   document.getElementById('undo-draw').addEventListener('click', undo);
   document.getElementById('redo-draw').addEventListener('click', redo);
 
-  // ---------- Guardar JPG ----------
+  // ================= Modo / herramientas / grupo =================
+  document.getElementById('mode-move').addEventListener('click', () => setMode('move'));
+  document.getElementById('mode-draw').addEventListener('click', () => setMode('draw'));
+  document.getElementById('mode-multi').addEventListener('click', () => setSelectMode(!selectMode));
+  ['solid','dotted','dashed','triangle','circle','text'].forEach(id => {
+    document.getElementById('tool-'+id).addEventListener('click', function() { setTool(id); });
+  });
+
+  // ================= Exportar JPG =================
   document.getElementById('save-jpg').addEventListener('click', function() {
     const svgEl = document.getElementById('rink-svg');
     const svgData = new XMLSerializer().serializeToString(svgEl);
@@ -597,32 +690,11 @@
       expCanvas.width = canvas.width;
       expCanvas.height = canvas.height;
       const ectx = expCanvas.getContext('2d');
-      ectx.fillStyle = '#141414';
+      ectx.fillStyle = '#ffffff';
       ectx.fillRect(0,0,expCanvas.width,expCanvas.height);
       ectx.drawImage(img, 0, 0, expCanvas.width, expCanvas.height);
       ectx.drawImage(canvas, 0, 0);
-      // Dibujar tokens
-      const tokens = tokenLayer.querySelectorAll('div');
-      tokens.forEach(t => {
-        const x = parseFloat(t.style.left) || 0;
-        const y = parseFloat(t.style.top) || 0;
-        const w = parseFloat(t.style.width) || 40;
-        const h = parseFloat(t.style.height) || 40;
-        ectx.fillStyle = t.style.background;
-        ectx.beginPath();
-        ectx.arc(x+w/2, y+h/2, w/2, 0, 2*Math.PI);
-        ectx.fill();
-        ectx.strokeStyle = 'rgba(0,0,0,0.35)';
-        ectx.lineWidth = 1.5;
-        ectx.stroke();
-        if (t.textContent) {
-          ectx.fillStyle = t.style.color || '#fff';
-          ectx.font = '600 13px Arial';
-          ectx.textAlign = 'center';
-          ectx.textBaseline = 'middle';
-          ectx.fillText(t.textContent, x+w/2, y+h/2+1);
-        }
-      });
+      drawAllItemsOnCtx(ectx);
       URL.revokeObjectURL(url);
       const link = document.createElement('a');
       link.download = 'pizarra_hockey.jpg';
@@ -632,119 +704,64 @@
     img.src = url;
   });
 
-  // ---------- Guardar Vídeo ----------
+  // ================= Exportar Vídeo =================
   document.getElementById('save-video').addEventListener('click', function() {
-    const lineStrokes = strokes.filter(s => s.type === 'line' && s.points.length > 1);
-    if (lineStrokes.length === 0) {
-      alert('Dibuja al menos una línea antes de grabar vídeo.');
+    if (isGeneratingVideo || isPlaying) return;
+    if (typeof MediaRecorder === 'undefined') {
+      alert('Tu navegador no soporta la grabación de vídeo.');
       return;
     }
+    const lineStrokes = strokes.filter(s => s.type === 'line' && s.points.length > 1);
+    if (lineStrokes.length === 0) { alert('Dibuja al menos una línea antes de grabar vídeo.'); return; }
     const btn = this;
     const origText = btn.textContent;
     btn.disabled = true;
     btn.textContent = '⏳ Generando...';
+    isGeneratingVideo = true;
 
     const w = canvas.width, h = canvas.height;
     const offCanvas = document.createElement('canvas');
-    offCanvas.width = w;
-    offCanvas.height = h;
+    offCanvas.width = w; offCanvas.height = h;
     const offCtx = offCanvas.getContext('2d');
 
-    // Cargar fondo SVG
     const svgEl = document.getElementById('rink-svg');
     const svgData = new XMLSerializer().serializeToString(svgEl);
     const svgBlob = new Blob([svgData], {type:'image/svg+xml;charset=utf-8'});
     const url = URL.createObjectURL(svgBlob);
     const bgImg = new Image();
     bgImg.onload = function() {
-      // Preparar datos de animación
-      const animsData = lineStrokes.map(s => {
-        const pts = s.points;
-        let lengths = [], total = 0;
-        for (let i=1; i<pts.length; i++) {
-          const d = Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y);
-          lengths.push(d);
-          total += d;
-        }
-        const duration = Math.max(700, Math.min(3000, total * 5));
-        return { stroke: s, lengths, total, duration };
-      });
+      const animsData = computeAnimData(lineStrokes);
       let offsets = [], acc = 0;
       animsData.forEach(a => { offsets.push(acc); acc += a.duration; });
       const totalDuration = acc + 800;
 
-      // Función para dibujar un fotograma en offCtx
       function drawFrame(time) {
-        const elapsed = time;
         offCtx.clearRect(0,0,w,h);
         offCtx.drawImage(bgImg, 0, 0, w, h);
         renderStrokesOn(offCtx);
 
-        // Marcadores y tokens en movimiento
         const overrides = new Map();
         animsData.forEach((a, idx) => {
-          const localT = elapsed - offsets[idx];
+          const localT = time - offsets[idx];
           const prog = localT <= 0 ? 0 : (localT >= a.duration ? 1 : localT / a.duration);
-          const distTarget = prog * a.total;
-          let acc2 = 0, i = 0;
-          while (i < a.lengths.length - 1 && acc2 + a.lengths[i] < distTarget) {
-            acc2 += a.lengths[i];
-            i++;
-          }
-          const pts = a.stroke.points;
-          const segStart = pts[i], segEnd = pts[i+1] || pts[i];
-          const segLen = a.lengths[i] || 1;
-          const segProgress = segLen ? (distTarget - acc2) / segLen : 1;
-          const x = segStart.x + (segEnd.x - segStart.x) * segProgress;
-          const y = segStart.y + (segEnd.y - segStart.y) * segProgress;
-          if (a.stroke.linkedToken) {
-            overrides.set(a.stroke.linkedToken, { x, y });
+          const p = posAtProgress(a, prog);
+          if (a.stroke.linkedItemId) {
+            overrides.set(a.stroke.linkedItemId, { x: p.x, y: p.y });
           } else if (localT >= 0 && localT <= a.duration) {
-            drawMarker(offCtx, x, y, (a.stroke.lineStyle === 'dashed'), a.stroke.color);
+            drawMarker(offCtx, p.x, p.y, (a.stroke.lineStyle === 'dashed'), a.stroke.color);
           }
         });
-
-        // Dibujar tokens estáticos y los que se mueven
-        const tokens = tokenLayer.querySelectorAll('div');
-        tokens.forEach(t => {
-          let cx, cy;
-          if (overrides.has(t)) {
-            const o = overrides.get(t);
-            cx = o.x; cy = o.y;
-          } else {
-            cx = parseFloat(t.style.left) + (parseFloat(t.style.width)||40)/2;
-            cy = parseFloat(t.style.top) + (parseFloat(t.style.height)||40)/2;
-          }
-          const w2 = parseFloat(t.style.width) || 40;
-          const h2 = parseFloat(t.style.height) || 40;
-          offCtx.fillStyle = t.style.background;
-          offCtx.beginPath();
-          offCtx.arc(cx, cy, w2/2, 0, 2*Math.PI);
-          offCtx.fill();
-          offCtx.strokeStyle = 'rgba(0,0,0,0.35)';
-          offCtx.lineWidth = 1.5;
-          offCtx.stroke();
-          if (t.textContent) {
-            offCtx.fillStyle = t.style.color || '#fff';
-            offCtx.font = '600 13px Arial';
-            offCtx.textAlign = 'center';
-            offCtx.textBaseline = 'middle';
-            offCtx.fillText(t.textContent, cx, cy+1);
-          }
-        });
+        drawAllItemsOnCtx(offCtx, overrides);
       }
 
-      // Captura
       const stream = offCanvas.captureStream(30);
       const mimeTypes = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
       let mimeType = null;
-      for (let mt of mimeTypes) {
-        if (MediaRecorder.isTypeSupported(mt)) { mimeType = mt; break; }
-      }
+      for (let mt of mimeTypes) { if (MediaRecorder.isTypeSupported(mt)) { mimeType = mt; break; } }
       if (!mimeType) {
-        alert('Tu navegador no soporta grabación de vídeo WebM.');
-        btn.disabled = false;
-        btn.textContent = origText;
+        alert('Tu navegador no soporta la grabación de vídeo en formato WebM.');
+        btn.disabled = false; btn.textContent = origText;
+        isGeneratingVideo = false;
         return;
       }
       const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 2500000 });
@@ -759,18 +776,17 @@
         downloadLink.href = url2;
         downloadLink.download = 'pizarra_hockey.webm';
         document.getElementById('video-result').style.display = 'block';
-        btn.disabled = false;
-        btn.textContent = origText;
+        btn.disabled = false; btn.textContent = origText;
+        isGeneratingVideo = false;
       };
       recorder.start(1000/30);
 
-      // Resetear tokens a posiciones iniciales
       const resetDone = new Set();
       lineStrokes.forEach(s => {
-        if (s.linkedToken && s.tokenStart && !resetDone.has(s.linkedToken)) {
-          s.linkedToken.style.left = s.tokenStart.left + 'px';
-          s.linkedToken.style.top = s.tokenStart.top + 'px';
-          resetDone.add(s.linkedToken);
+        if (s.linkedItemId && s.tokenStart && !resetDone.has(s.linkedItemId)) {
+          const it = items.find(i => i.id === s.linkedItemId);
+          if (it) { it.x = s.tokenStart.x; it.y = s.tokenStart.y; it.el.style.left = it.x+'px'; it.el.style.top = it.y+'px'; }
+          resetDone.add(s.linkedItemId);
         }
       });
       redraw();
@@ -778,11 +794,7 @@
       const startTime = performance.now();
       function renderLoop(now) {
         const elapsed = now - startTime;
-        if (elapsed >= totalDuration) {
-          drawFrame(totalDuration);
-          recorder.stop();
-          return;
-        }
+        if (elapsed >= totalDuration) { drawFrame(totalDuration); recorder.stop(); return; }
         drawFrame(elapsed);
         requestAnimationFrame(renderLoop);
       }
@@ -791,26 +803,214 @@
     bgImg.src = url;
   });
 
-  // ---------- Inicialización ----------
+  // ================= Biblioteca de jugadas (localStorage) =================
+  const PLAYS_KEY = 'hcpalau_pizarra_plays_v1';
+
+  function loadPlaysIndex() {
+    try {
+      const raw = localStorage.getItem(PLAYS_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch (e) {
+      console.error('No se pudo leer la biblioteca de jugadas:', e);
+      return [];
+    }
+  }
+  function savePlaysIndex(list) {
+    try {
+      localStorage.setItem(PLAYS_KEY, JSON.stringify(list));
+      return true;
+    } catch (e) {
+      console.error('No se pudo guardar la biblioteca de jugadas:', e);
+      alert('No se pudo guardar la jugada en este navegador (almacenamiento no disponible).');
+      return false;
+    }
+  }
+  function currentSnapshot(name) {
+    return {
+      id: 'play_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
+      name: name,
+      date: new Date().toISOString(),
+      items: serializeItems(),
+      strokes: serializeStrokes(),
+      redCount, blueCount
+    };
+  }
+
+  document.getElementById('save-play').addEventListener('click', () => {
+    const defaultName = 'Jugada ' + new Date().toLocaleString('es-ES', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
+    const name = prompt('Nombre de la jugada:', defaultName);
+    if (name === null || name.trim() === '') return;
+    const snapshot = currentSnapshot(name.trim());
+    const list = loadPlaysIndex();
+    list.push(snapshot);
+    if (savePlaysIndex(list)) alert('Jugada guardada: "' + snapshot.name + '"');
+  });
+
+  function applySnapshotToBoard(snapshot) {
+    history = [];
+    historyIndex = -1;
+    loadFromState({
+      items: snapshot.items,
+      strokes: snapshot.strokes,
+      redCount: snapshot.redCount,
+      blueCount: snapshot.blueCount
+    });
+    saveState();
+  }
+
+  function renderLibraryList(filterText) {
+    const list = loadPlaysIndex().sort((a,b) => new Date(b.date) - new Date(a.date));
+    const container2 = document.getElementById('library-list');
+    container2.innerHTML = '';
+    const filtered = filterText
+      ? list.filter(p => p.name.toLowerCase().includes(filterText.toLowerCase()))
+      : list;
+    if (filtered.length === 0) {
+      container2.innerHTML = '<div id="library-empty">No hay jugadas guardadas todavía.</div>';
+      return;
+    }
+    filtered.forEach(play => {
+      const row = document.createElement('div');
+      row.className = 'play-row';
+      const dateStr = new Date(play.date).toLocaleString('es-ES', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
+      row.innerHTML = `
+        <div class="play-name"></div>
+        <div class="play-date">${dateStr}</div>
+        <div class="play-actions">
+          <button class="primary" data-act="load">Cargar</button>
+          <button data-act="play">Cargar y Play</button>
+          <button data-act="export">Exportar</button>
+          <button class="danger" data-act="delete">Eliminar</button>
+        </div>
+      `;
+      row.querySelector('.play-name').textContent = play.name;
+      row.querySelector('[data-act="load"]').addEventListener('click', () => {
+        applySnapshotToBoard(play);
+        closeLibrary();
+      });
+      row.querySelector('[data-act="play"]').addEventListener('click', () => {
+        applySnapshotToBoard(play);
+        closeLibrary();
+        setTimeout(() => document.getElementById('play-anim').click(), 150);
+      });
+      row.querySelector('[data-act="export"]').addEventListener('click', () => {
+        const blob = new Blob([JSON.stringify(play, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const safeName = play.name.replace(/[^a-z0-9_\-]+/gi, '_').toLowerCase();
+        a.href = url;
+        a.download = safeName + '.json';
+        a.click();
+        URL.revokeObjectURL(url);
+      });
+      row.querySelector('[data-act="delete"]').addEventListener('click', () => {
+        if (!confirm('¿Eliminar la jugada "' + play.name + '"?')) return;
+        const list2 = loadPlaysIndex().filter(p => p.id !== play.id);
+        savePlaysIndex(list2);
+        renderLibraryList(document.getElementById('library-search').value);
+      });
+      container2.appendChild(row);
+    });
+  }
+
+  function openLibrary() {
+    document.getElementById('library-overlay').classList.add('open');
+    document.getElementById('library-search').value = '';
+    renderLibraryList('');
+  }
+  function closeLibrary() {
+    document.getElementById('library-overlay').classList.remove('open');
+  }
+  document.getElementById('open-library').addEventListener('click', openLibrary);
+  document.getElementById('library-close').addEventListener('click', closeLibrary);
+  document.getElementById('library-overlay').addEventListener('click', (e) => {
+    if (e.target.id === 'library-overlay') closeLibrary();
+  });
+  document.getElementById('library-search').addEventListener('input', (e) => {
+    renderLibraryList(e.target.value);
+  });
+
+  // Importar jugada desde archivo .json
+  document.getElementById('import-play').addEventListener('click', () => {
+    document.getElementById('import-file-input').click();
+  });
+  document.getElementById('import-file-input').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const play = JSON.parse(reader.result);
+        if (!play.items || !play.strokes) throw new Error('Formato no válido');
+        if (!play.id) play.id = 'play_' + Date.now();
+        if (!play.date) play.date = new Date().toISOString();
+        if (!play.name) play.name = file.name.replace(/\.json$/i, '');
+        const list = loadPlaysIndex();
+        list.push(play);
+        savePlaysIndex(list);
+        alert('Jugada "' + play.name + '" importada a tu biblioteca.');
+        openLibrary();
+      } catch (err) {
+        alert('El archivo no es una jugada válida.');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  });
+
+  // ================= Redimensionado (escalado proporcional) =================
   function resizeCanvas() {
     const rect = container.getBoundingClientRect();
-    canvas.width = rect.width;
-    canvas.height = rect.height;
+    const newW = rect.width;
+    const newH = rect.height;
+    if (canvas.width === 0 || canvas.height === 0) {
+      canvas.width = newW;
+      canvas.height = newH;
+      redraw();
+      return;
+    }
+    const oldW = canvas.width;
+    const oldH = canvas.height;
+    const scaleX = newW / oldW;
+    const scaleY = newH / oldH;
+    if (scaleX !== 1 || scaleY !== 1) {
+      items.forEach(it => {
+        it.x = it.x * scaleX;
+        it.y = it.y * scaleY;
+        it.w = it.w * scaleX;
+        it.h = it.h * scaleY;
+        if (it.el) {
+          it.el.style.left = it.x + 'px';
+          it.el.style.top = it.y + 'px';
+          it.el.style.width = it.w + 'px';
+          it.el.style.height = it.h + 'px';
+        }
+      });
+      strokes.forEach(s => {
+        s.points.forEach(p => {
+          p.x = p.x * scaleX;
+          p.y = p.y * scaleY;
+        });
+        if (s.tokenStart) {
+          s.tokenStart.x = s.tokenStart.x * scaleX;
+          s.tokenStart.y = s.tokenStart.y * scaleY;
+        }
+        if (s.tokenW) s.tokenW = s.tokenW * scaleX;
+        if (s.tokenH) s.tokenH = s.tokenH * scaleY;
+      });
+    }
+    canvas.width = newW;
+    canvas.height = newH;
     redraw();
   }
+
   window.addEventListener('resize', resizeCanvas);
+  window.addEventListener('orientationchange', () => setTimeout(resizeCanvas, 200));
   setTimeout(resizeCanvas, 50);
 
-  // Eventos de modo y herramientas
-  document.getElementById('mode-move').addEventListener('click', () => setMode('move'));
-  document.getElementById('mode-draw').addEventListener('click', () => setMode('draw'));
-  ['solid','dotted','dashed','triangle','circle','text'].forEach(id => {
-    document.getElementById('tool-'+id).addEventListener('click', function() {
-      setTool(id);
-    });
-  });
+  // ================= Inicialización =================
   setTool('solid');
   setMode('move');
   updateUndoRedoButtons();
-  saveState(); // guardar estado inicial
+  saveState();
 })();
