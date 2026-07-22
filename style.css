@@ -108,7 +108,6 @@ main {
     pointer-events: none;
 }
 
-/* Elementos arrastrables */
 .item-el {
     position: absolute;
     display: flex;
@@ -323,7 +322,6 @@ input[type="color"]::-webkit-color-swatch {
     font-size: 13px;
 }
 
-/* Biblioteca */
 #library-overlay {
     display: none;
     position: fixed;
@@ -452,12 +450,6 @@ input[type="color"]::-webkit-color-swatch {
     border: 1.5px solid var(--border) !important;
 }
 
-#library-import {
-    background: var(--accent);
-    color: #04170b;
-}
-
-/* Ajustes responsive */
 @media (max-width: 480px) {
     .icon-btn {
         width: 50px;
