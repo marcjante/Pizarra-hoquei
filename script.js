@@ -1,29 +1,31 @@
 (function(){
+  // ================= Elementos =================
   const container = document.getElementById('rink-container');
   const canvas = document.getElementById('draw-canvas');
   const ctx = canvas.getContext('2d');
   const tokenLayer = document.getElementById('token-layer');
 
-  let mode = 'move';
-  let tool = 'solid';
-  let selectMode = false;
+  // ================= Estado global =================
+  let mode = 'move';           // 'move' | 'draw'
+  let tool = 'solid';          // 'solid' | 'dotted' | 'dashed' | 'triangle' | 'circle' | 'text'
+  let selectMode = false;      // modo "Grupo" activo/inactivo
   let redCount = 0, blueCount = 0;
   let itemSeq = 1;
-  let items = [];
-  let strokes = [];
+  let items = [];               // {id,kind,x,y,w,h,color,textColor,label,selected,el}
+  let strokes = [];             // solo líneas de movimiento/pase: {type:'line', color, lineStyle, points:[{x,y}], linkedItemId, tokenStart:{x,y}, tokenW, tokenH}
   let currentStroke = null;
   let history = [];
   let historyIndex = -1;
   let isPlaying = false;
-  let isGeneratingVideo = false;
   let activeAnimations = [];
   let animLoopRunning = false;
 
-  const SHAPE_R = 11;
-  const MARKER_R = 8;
+  const SHAPE_R = 11;           // radio de triángulo/círculo (más pequeño que antes)
+  const MARKER_R = 8;           // radio del marcador animado (bola/paso sin vínculo)
 
   function uid(){ return 'it' + (itemSeq++) + '_' + Math.random().toString(36).slice(2,7); }
 
+  // ================= Historial (undo/redo) =================
   function serializeItems() {
     return items.map(it => ({
       id: it.id, kind: it.kind, x: it.x, y: it.y, w: it.w, h: it.h,
@@ -67,6 +69,7 @@
     document.getElementById('redo-draw').disabled = (historyIndex >= history.length - 1);
   }
 
+  // ================= Líneas de movimiento (canvas) =================
   function renderStrokesOn(targetCtx) {
     strokes.forEach(s => {
       targetCtx.save();
@@ -91,7 +94,9 @@
     renderStrokesOn(ctx);
   }
 
+  // ================= Dibujo de items sobre un canvas (para export JPG/vídeo) =================
   function drawItemOnCtx(targetCtx, it, cx, cy) {
+    // cx, cy = centro actual (puede diferir de it.x/it.y durante animación)
     targetCtx.save();
     if (it.kind === 'player' || it.kind === 'ball') {
       const w = it.w, h = it.h;
@@ -139,9 +144,9 @@
     } else if (it.kind === 'text') {
       targetCtx.fillStyle = it.color;
       targetCtx.font = '600 15px Arial';
-      targetCtx.textAlign = 'center';
+      targetCtx.textAlign = 'left';
       targetCtx.textBaseline = 'middle';
-      targetCtx.fillText(it.label || '', cx, cy);
+      targetCtx.fillText(it.label || '', it.x, cy);
     }
     targetCtx.restore();
   }
@@ -159,6 +164,7 @@
     });
   }
 
+  // ================= Construcción de items (jugadores, bola y figuras) =================
   function buildItemEl(it) {
     const el = document.createElement('div');
     el.className = 'item-el';
@@ -230,6 +236,7 @@
     const it = items[idx];
     if (it.el && it.el.parentNode) it.el.parentNode.removeChild(it.el);
     items.splice(idx, 1);
+    // Elimina también cualquier línea vinculada a este ítem
     strokes = strokes.filter(s => s.linkedItemId !== id);
     redraw();
     saveState();
@@ -241,15 +248,15 @@
       it.el.style.pointerEvents = (mode === 'move') ? 'auto' : 'none';
       it.el.style.cursor = (mode === 'move') ? 'grab' : 'default';
       it.el.classList.toggle('show-del', showDel);
-      it.el.classList.toggle('selected', !!it.selected);
     });
   }
 
+  // ================= Interacción: arrastrar, seleccionar, borrar =================
   function wireItemInteractions(it, el, delBtn) {
     let isDragging = false;
     let startX = 0, startY = 0;
     let moved = false;
-    let groupStart = null;
+    let groupStart = null; // Map id -> {x,y} cuando se arrastra un grupo
 
     function startDrag(clientX, clientY) {
       if (mode !== 'move') return;
@@ -297,6 +304,7 @@
       }
     }
 
+    // Táctil
     el.addEventListener('touchstart', (e) => {
       if (mode !== 'move') return;
       e.preventDefault();
@@ -315,6 +323,7 @@
       document.removeEventListener('touchcancel', onTouchEnd);
     }
 
+    // Ratón
     el.addEventListener('mousedown', (e) => {
       if (mode !== 'move') return;
       e.preventDefault();
@@ -330,11 +339,13 @@
       document.removeEventListener('mouseup', onMouseUp);
     }
 
+    // Botón de borrado (x pequeña)
     delBtn.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); deleteItem(it.id); }, { passive: false });
     delBtn.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); });
     delBtn.addEventListener('click', (e) => { e.stopPropagation(); deleteItem(it.id); });
   }
 
+  // ================= Utilidades de búsqueda =================
   function findNearestPlayer(x, y) {
     let best = null, bestDist = 40;
     items.forEach(it => {
@@ -349,6 +360,7 @@
     return items.find(it => it.kind === 'ball') || null;
   }
 
+  // ================= Modo y herramientas =================
   function setMode(m) {
     mode = m;
     document.getElementById('mode-move').classList.toggle('active', m==='move');
@@ -373,6 +385,7 @@
     }
   }
 
+  // ================= Dibujo de líneas en canvas =================
   function canvasCoordsFromClient(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
@@ -415,6 +428,7 @@
         saveState();
       }
     } else {
+      // triangle / circle: figuras insertables y movibles
       addItem(tool, x, y, { color });
       currentStroke = null;
       saveState();
@@ -428,7 +442,7 @@
   }
   function endDraw() {
     if (currentStroke && currentStroke.type === 'line' && currentStroke.points.length > 1) {
-      // válida
+      // línea válida, se mantiene
     } else if (currentStroke) {
       strokes.pop();
       redraw();
@@ -472,6 +486,7 @@
     document.removeEventListener('mouseup', onCanvasMouseUp);
   }
 
+  // ================= Animación (Play) =================
   function drawMarker(targetCtx, x, y, dashed, color) {
     targetCtx.save();
     if (dashed) {
@@ -585,7 +600,7 @@
   }
 
   document.getElementById('play-anim').addEventListener('click', function() {
-    if (isPlaying || isGeneratingVideo) return;
+    if (isPlaying) return;
     const lineStrokes = strokes.filter(s => s.type === 'line');
     if (lineStrokes.length === 0) { alert('No hay líneas para reproducir.'); return; }
     activeAnimations = [];
@@ -617,6 +632,7 @@
     }
   });
 
+  // ================= Botones de añadir jugadores/bola =================
   document.getElementById('add-red').addEventListener('click', () => {
     redCount++;
     addItem('player', canvas.width*0.15 + ((redCount-1)%6)*(canvas.width*0.13), canvas.height*0.30, { color:'#e5484d', textColor:'#fff', label:String(redCount) });
@@ -655,6 +671,7 @@
   document.getElementById('undo-draw').addEventListener('click', undo);
   document.getElementById('redo-draw').addEventListener('click', redo);
 
+  // ================= Modo / herramientas / grupo =================
   document.getElementById('mode-move').addEventListener('click', () => setMode('move'));
   document.getElementById('mode-draw').addEventListener('click', () => setMode('draw'));
   document.getElementById('mode-multi').addEventListener('click', () => setSelectMode(!selectMode));
@@ -662,6 +679,7 @@
     document.getElementById('tool-'+id).addEventListener('click', function() { setTool(id); });
   });
 
+  // ================= Exportar JPG =================
   document.getElementById('save-jpg').addEventListener('click', function() {
     const svgEl = document.getElementById('rink-svg');
     const svgData = new XMLSerializer().serializeToString(svgEl);
@@ -687,19 +705,14 @@
     img.src = url;
   });
 
+  // ================= Exportar Vídeo =================
   document.getElementById('save-video').addEventListener('click', function() {
-    if (isGeneratingVideo || isPlaying) return;
-    if (typeof MediaRecorder === 'undefined') {
-      alert('Tu navegador no soporta la grabación de vídeo.');
-      return;
-    }
     const lineStrokes = strokes.filter(s => s.type === 'line' && s.points.length > 1);
     if (lineStrokes.length === 0) { alert('Dibuja al menos una línea antes de grabar vídeo.'); return; }
     const btn = this;
     const origText = btn.textContent;
     btn.disabled = true;
     btn.textContent = '⏳ Generando...';
-    isGeneratingVideo = true;
 
     const w = canvas.width, h = canvas.height;
     const offCanvas = document.createElement('canvas');
@@ -741,9 +754,8 @@
       let mimeType = null;
       for (let mt of mimeTypes) { if (MediaRecorder.isTypeSupported(mt)) { mimeType = mt; break; } }
       if (!mimeType) {
-        alert('Tu navegador no soporta la grabación de vídeo en formato WebM.');
+        alert('Tu navegador no soporta grabación de vídeo WebM.');
         btn.disabled = false; btn.textContent = origText;
-        isGeneratingVideo = false;
         return;
       }
       const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 2500000 });
@@ -759,7 +771,6 @@
         downloadLink.download = 'pizarra_hockey.webm';
         document.getElementById('video-result').style.display = 'block';
         btn.disabled = false; btn.textContent = origText;
-        isGeneratingVideo = false;
       };
       recorder.start(1000/30);
 
@@ -785,6 +796,7 @@
     bgImg.src = url;
   });
 
+  // ================= Biblioteca de jugadas (localStorage) =================
   const PLAYS_KEY = 'hcpalau_pizarra_plays_v1';
 
   function loadPlaysIndex() {
@@ -828,8 +840,6 @@
   });
 
   function applySnapshotToBoard(snapshot) {
-    history = [];
-    historyIndex = -1;
     loadFromState({
       items: snapshot.items,
       strokes: snapshot.strokes,
@@ -911,6 +921,7 @@
     renderLibraryList(e.target.value);
   });
 
+  // Importar jugada desde archivo .json (para el flujo de la carpeta /plays en GitHub)
   document.getElementById('import-play').addEventListener('click', () => {
     document.getElementById('import-file-input').click();
   });
@@ -938,53 +949,14 @@
     e.target.value = '';
   });
 
+  // ================= Inicialización =================
   function resizeCanvas() {
     const rect = container.getBoundingClientRect();
-    const newW = rect.width;
-    const newH = rect.height;
-    if (canvas.width === 0 || canvas.height === 0) {
-      canvas.width = newW;
-      canvas.height = newH;
-      redraw();
-      return;
-    }
-    const oldW = canvas.width;
-    const oldH = canvas.height;
-    const scaleX = newW / oldW;
-    const scaleY = newH / oldH;
-    if (scaleX !== 1 || scaleY !== 1) {
-      items.forEach(it => {
-        it.x = it.x * scaleX;
-        it.y = it.y * scaleY;
-        it.w = it.w * scaleX;
-        it.h = it.h * scaleY;
-        if (it.el) {
-          it.el.style.left = it.x + 'px';
-          it.el.style.top = it.y + 'px';
-          it.el.style.width = it.w + 'px';
-          it.el.style.height = it.h + 'px';
-        }
-      });
-      strokes.forEach(s => {
-        s.points.forEach(p => {
-          p.x = p.x * scaleX;
-          p.y = p.y * scaleY;
-        });
-        if (s.tokenStart) {
-          s.tokenStart.x = s.tokenStart.x * scaleX;
-          s.tokenStart.y = s.tokenStart.y * scaleY;
-        }
-        if (s.tokenW) s.tokenW = s.tokenW * scaleX;
-        if (s.tokenH) s.tokenH = s.tokenH * scaleY;
-      });
-    }
-    canvas.width = newW;
-    canvas.height = newH;
+    canvas.width = rect.width;
+    canvas.height = rect.height;
     redraw();
   }
-
   window.addEventListener('resize', resizeCanvas);
-  window.addEventListener('orientationchange', () => setTimeout(resizeCanvas, 200));
   setTimeout(resizeCanvas, 50);
 
   setTool('solid');
