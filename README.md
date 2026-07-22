@@ -1,55 +1,33 @@
-# Pizarra Táctica – Hoquei Patines Palau-Solità i Plegamants
+# 🏒 Pizarra de Hockey Patines – Palau-Solità i Plegamants
 
-Pizarra táctica interactiva para hockey patines: colocación de jugadores, dibujo de jugadas, animación y exportación a JPG/vídeo.
+Aplicación web interactiva para diseñar y animar jugadas de hockey sobre patines. Ideal para entrenadores, jugadores y aficionados que quieran visualizar tácticas y movimientos sobre una pista de hockey.
 
-## Archivos
+## 🚀 Características
 
-- `index.html` — estructura de la página
-- `style.css` — estilos
-- `script.js` — lógica de la pizarra (dibujo, jugadores, animación, exportación)
+- **Pista de hockey** con dimensiones y marcas oficiales.
+- **Jugadores y porteros** en colores rojo, azul y amarillo.
+- **Bola** que se puede mover libremente.
+- **Dibujo de líneas** de movimiento, pase y tiro (trazos sólidos, discontinuos y de puntos).
+- **Figuras auxiliares**: triángulos, círculos y texto.
+- **Animación "Play"** que reproduce secuencialmente los movimientos dibujados.
+- **Modo grupo** para seleccionar y mover varios jugadores a la vez.
+- **Historial de acciones** (deshacer/rehacer).
+- **Exportación a JPG** de la pizarra completa.
+- **Exportación a vídeo WebM** de la animación.
+- **Biblioteca de jugadas** con guardado en localStorage.
+- **Importación/exportación** de jugadas en formato JSON.
+- **Responsive** y optimizado para móviles.
 
-## Subir el proyecto a GitHub
+## 🛠️ Tecnologías
 
-### 1. Crear el repositorio
+- HTML5 + CSS3
+- JavaScript ES6 (vanilla)
+- Canvas 2D
+- MediaRecorder API (para vídeo)
+- localStorage (para la biblioteca)
 
-1. Entra en [github.com](https://github.com) y pulsa **New repository**.
-2. Ponle un nombre, por ejemplo `pizarra-hockey`.
-3. Déjalo público si quieres usar GitHub Pages gratis.
-4. No añadas README ni .gitignore desde la web (ya los tienes aquí).
-5. Pulsa **Create repository**.
+## 📦 Instalación y ejecución local
 
-### 2. Subir los archivos desde tu ordenador
-
-Con Git instalado, desde la carpeta donde tengas estos tres archivos:
-
+1. Clona el repositorio:
 ```bash
-git init
-git add index.html style.css script.js README.md
-git commit -m "Primera versión de la pizarra táctica"
-git branch -M main
-git remote add origin https://github.com/TU_USUARIO/pizarra-hockey.git
-git push -u origin main
-```
-
-Sustituye `TU_USUARIO` y `pizarra-hockey` por tu usuario y el nombre real del repositorio.
-
-### 3. Alternativa sin terminal (subida web)
-
-1. Abre el repositorio en GitHub.
-2. Pulsa **Add file → Upload files**.
-3. Arrastra `index.html`, `style.css` y `script.js`.
-4. Escribe un mensaje de commit y pulsa **Commit changes**.
-
-### 4. Publicarlo online con GitHub Pages (opcional)
-
-Para tener una URL pública tipo `https://TU_USUARIO.github.io/pizarra-hockey/`:
-
-1. En el repositorio, ve a **Settings → Pages**.
-2. En **Source**, elige la rama `main` y la carpeta `/ (root)`.
-3. Guarda. En un minuto o dos, GitHub te dará el enlace público.
-4. Cada vez que subas cambios a `main`, la página se actualiza sola.
-
-## Notas
-
-- No hace falta servidor ni build: son archivos estáticos, funciona directo en el navegador o en GitHub Pages.
-- La exportación a vídeo usa la API `MediaRecorder` del navegador; funciona en Chrome/Edge/Firefox de escritorio y en Chrome Android. En iOS Safari puede no estar disponible.
+git clone https://github.com/tu-usuario/hoquei-palau-pizarra.git
