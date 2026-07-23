@@ -55,6 +55,7 @@
     items.forEach(it => { it.el = buildItemEl(it); tokenLayer.appendChild(it.el); });
     applyModeToItems();
     redraw();
+    renderStepBadges();
   }
   function restoreState(index) {
     if (index < 0 || index >= history.length) return;
@@ -71,6 +72,24 @@
 
   // ================= Líneas de movimiento (canvas) =================
   function renderStrokesOn(targetCtx) {
+    // Marcador "fantasma" en la posición de inicio de cada línea vinculada a un jugador
+    strokes.forEach(s => {
+      if (s.linkedItemId && s.tokenStart && s.tokenW) {
+        targetCtx.save();
+        targetCtx.globalAlpha = 0.28;
+        targetCtx.fillStyle = s.color;
+        targetCtx.strokeStyle = s.color;
+        targetCtx.setLineDash([3, 3]);
+        targetCtx.lineWidth = 1.5;
+        const gcx = s.tokenStart.x + s.tokenW/2;
+        const gcy = s.tokenStart.y + s.tokenH/2;
+        targetCtx.beginPath();
+        targetCtx.arc(gcx, gcy, s.tokenW/2, 0, 2*Math.PI);
+        targetCtx.fill();
+        targetCtx.stroke();
+        targetCtx.restore();
+      }
+    });
     strokes.forEach(s => {
       targetCtx.save();
       targetCtx.strokeStyle = s.color;
@@ -93,6 +112,60 @@
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     renderStrokesOn(ctx);
   }
+
+  // ================= Insignias de paso (1, 2, 3...) =================
+  const stepLayer = document.getElementById('step-layer');
+  let showSteps = true;
+
+  function midpointOfPoints(pts) {
+    let lengths = [], total = 0;
+    for (let i=1; i<pts.length; i++) {
+      const d = Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y);
+      lengths.push(d); total += d;
+    }
+    if (total === 0) return pts[0];
+    const half = total/2;
+    let acc = 0, i = 0;
+    while (i < lengths.length - 1 && acc + lengths[i] < half) { acc += lengths[i]; i++; }
+    const segLen = lengths[i] || 1;
+    const t = (half - acc) / segLen;
+    return {
+      x: pts[i].x + (pts[i+1].x - pts[i].x) * t,
+      y: pts[i].y + (pts[i+1].y - pts[i].y) * t
+    };
+  }
+
+  function renderStepBadges() {
+    stepLayer.innerHTML = '';
+    strokes.forEach((s, idx) => {
+      if (!s.points || s.points.length < 2) return;
+      const p = midpointOfPoints(s.points);
+      const badge = document.createElement('div');
+      badge.className = 'step-badge';
+      badge.style.left = p.x + 'px';
+      badge.style.top = p.y + 'px';
+      badge.textContent = String(idx + 1);
+      badge.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const answer = prompt('Nuevo número de paso (1-' + strokes.length + '):', String(idx + 1));
+        if (answer === null) return;
+        let n = parseInt(answer, 10);
+        if (isNaN(n)) return;
+        n = Math.max(1, Math.min(strokes.length, n)) - 1;
+        if (n === idx) return;
+        const [moved] = strokes.splice(idx, 1);
+        strokes.splice(n, 0, moved);
+        renderStepBadges();
+        saveState();
+      });
+      stepLayer.appendChild(badge);
+    });
+  }
+  document.getElementById('toggle-steps').addEventListener('click', function() {
+    showSteps = !showSteps;
+    this.classList.toggle('active', showSteps);
+    stepLayer.classList.toggle('hidden', !showSteps);
+  });
 
   // ================= Dibujo de items sobre un canvas (para export JPG/vídeo) =================
   function drawItemOnCtx(targetCtx, it, cx, cy) {
@@ -239,6 +312,7 @@
     // Elimina también cualquier línea vinculada a este ítem
     strokes = strokes.filter(s => s.linkedItemId !== id);
     redraw();
+    renderStepBadges();
     saveState();
   }
 
@@ -449,6 +523,7 @@
     }
     if (currentStroke) saveState();
     currentStroke = null;
+    renderStepBadges();
   }
 
   canvas.addEventListener('touchstart', (e) => {
@@ -660,12 +735,14 @@
       strokes = strokes.filter(s => !s.linkedItemId || items.some(i => i.id === s.linkedItemId));
       redCount = 0; blueCount = 0;
       redraw();
+      renderStepBadges();
       saveState();
     }
   });
   document.getElementById('clear-draw').addEventListener('click', () => {
     strokes = [];
     redraw();
+    renderStepBadges();
     saveState();
   });
   document.getElementById('undo-draw').addEventListener('click', undo);
